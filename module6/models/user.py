@@ -11,7 +11,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index = True)
     fullname = Column(String)
     email = Column(String(100), unique=True, nullable=False, index = True)
-    password_hash = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=True)
     
     
     github_id = Column(String(100), unique=True, nullable=True)

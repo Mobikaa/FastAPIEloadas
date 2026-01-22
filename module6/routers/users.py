@@ -20,7 +20,10 @@ def register_user(user_req: UserRequest, db: Session = Depends(get_db)):
         username=user_req.username,
         fullname=user_req.fullname,
         email=user_req.email,
-        password_hash=hash_password(user_req.password)
+        hashed_password=hash_password(user_req.password),
+        auth_provider="local",
+        github_id=None,
+        avatar_url=None
     )
 
     db.add(new_user)
@@ -33,7 +36,7 @@ def register_user(user_req: UserRequest, db: Session = Depends(get_db)):
 def login_user(user_req: UserLoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == user_req.username).first()
     
-    if not user or verify_password(user_req.password, user.password_hash) is False:
+    if not user or verify_password(user_req.password, user.hashed_password) is False:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     access_token = create_access_token(data={"sub": user.username})

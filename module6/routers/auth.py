@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from jose import jwt
 from sqlalchemy.orm import Session
-from config import GITHUB_CLIENT_ID, SECRET, GITHUB_REDIRECT_URI, FRONTEND_URL
+from config import GITHUB_CLIENT_ID, JWT_ALGORITHM, JWT_SECRET_KEY, SECRET, GITHUB_REDIRECT_URI, FRONTEND_URL
 from database import get_db
 from models.user import User
 from utils import create_access_token
 import requests
+import httpx
 
 router = APIRouter()
 
@@ -21,93 +23,108 @@ def github_login():
     else:
         print("GitHub OAuth credentials are set")
         
-    scope = "user"  # Adjust scope as required
+    scope = "read:user user:email"  # Adjust scope as required
     github_auth_url = f"https://github.com/login/oauth/authorize?client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}"
     return RedirectResponse(github_auth_url)
 
 
 @router.get("/github/callback")
-def github_callback(request: Request, db: Session = Depends(get_db)):
-    # Exchange code for access token
-    token_url = "https://github.com/login/oauth/access_token"
+async def github_callback(request: Request, db: Session = Depends(get_db)):
+    print("GitHub callback received")
     code = request.query_params.get("code")
-    print("Authorization code received:", code)
+    print(f"Received code: {code}")
+
     if not code:
-        raise HTTPException(status_code=400, detail="Authorization code not provided")
+        raise HTTPException(status_code=400, detail="Missing GitHub code")
+
+    # Step 1: Exchange code for access token
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": SECRET,
+                "code": code,
+                "redirect_uri": GITHUB_REDIRECT_URI,
+            },
+        )
+        token_data = token_response.json()
+        access_token = token_data.get("access_token")
+        print(f"Access token: {access_token}")
+        if not access_token:
+            raise HTTPException(status_code=400, detail="GitHub token exchange failed")
+
+        # Step 2: Fetch GitHub user profile
+        user_response = await client.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        user_data = user_response.json()
+        print(f"User data: {user_data}")
+
+        # Step 3: Get primary email
+        email_response = await client.get(
+            "https://api.github.com/user/emails",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        email_data = email_response.json()
+        primary_email = next((e["email"] for e in email_data if e.get("primary") and e.get("verified")), None)
+        if not primary_email:
+            raise HTTPException(status_code=400, detail="No verified primary email found")
+        print(f"Primary email: {primary_email}")
+        
+        # Step 4: Create or get user
+        user = get_or_create_user(
+            db=db,
+            github_id=str(user_data["id"]),
+            email=primary_email,
+            fullname=user_data.get("name"),
+            avatar_url=user_data.get("avatar_url"),
+        )
+        print(f"Store user's data in a local db: {user}")
+
+        # Step 5: Generate JWT
+        jwt_payload = {"sub": user.username, "email": user.email}
+        token = jwt.encode(jwt_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+        # Step 6: Redirect to frontend with token
+        return RedirectResponse(f"{FRONTEND_URL}?token={token}")
     
-    data = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "code": code,
-        "redirect_uri": redirect_uri
-    }
-    
-    headers = {"Accept": "application/json"}
-    response = requests.post(token_url, data=data, headers=headers)
-    response.raise_for_status()
-    token_data = response.json()
-    access_token = token_data.get("access_token")
-    print("Access token obtained:", access_token)
-    
-    if not access_token:
-        raise HTTPException(status_code=400, detail="Failed to obtain access token")
-    
-    # Fetch user profile
-    user_url = "https://api.github.com/user"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    user_response = requests.get(user_url, headers=headers)
-    user_response.raise_for_status()
-    user_data = user_response.json()
-    print("GitHub user data:", user_data)
-    
-    github_id = str(user_data["id"])
-    username = user_data["login"]
-    fullname = user_data.get("name", "")
-    avatar_url = user_data.get("avatar_url", "")
-    
-    # Fetch verified email
-    emails_url = "https://api.github.com/user/emails"
-    emails_response = requests.get(emails_url, headers=headers)
-    emails_response.raise_for_status()
-    emails_data = emails_response.json()
-    print("GitHub user emails:", emails_data)
-    
-    verified_email = None
-    for email_info in emails_data:
-        if email_info.get("primary") and email_info.get("verified"):
-            verified_email = email_info["email"]
-            break
-    
-    if not verified_email:
-        raise HTTPException(status_code=400, detail="No verified email found")
-    
-    # Check if user exists by github_id or email
-    user = db.query(User).filter((User.github_id == github_id) | (User.email == verified_email)).first()
-    
-    if user:
-        # Update existing user
-        user.github_id = github_id
-        user.avatar_url = avatar_url
-        user.auth_provider = "github"
-        if not user.fullname:
-            user.fullname = fullname
-    else:
-        # Create new user
+def get_or_create_user(
+    db: Session,
+    github_id: str,
+    email: str,
+    fullname: str = None,
+    avatar_url: str = None,
+    ):
+    # 1. Try to find user by GitHub ID
+    user = db.query(User).filter(User.github_id == github_id).first()
+
+    # 2. If not found, try to find user by email (account linking)
+    if not user and email:
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            # Link GitHub to existing user
+            user.github_id = github_id
+            user.avatar_url = avatar_url
+            user.auth_provider = "github"
+            db.commit()
+            db.refresh(user)
+
+    # 3. If still not found, create new user
+    if not user:
         user = User(
-            username=username,
+            username=email.split("@")[0],  # You can refine this logic
             fullname=fullname,
-            email=verified_email,
-            password_hash=None,  # No password for OAuth
+            email=email,
             github_id=github_id,
             avatar_url=avatar_url,
-            auth_provider="github"
+            auth_provider="github",
+            hashed_password=None  # GitHub users don’t have local passwords
         )
         db.add(user)
-    
-    db.commit()
-    db.refresh(user)
-    
-    # Create JWT
-    access_token_jwt = create_access_token(data={"sub": user.username, "email": user.email})
-    
-    return RedirectResponse(f"{FRONTEND_URL}?token={access_token_jwt}")
+        db.commit()
+        db.refresh(user)
+
+    return user

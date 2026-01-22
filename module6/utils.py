@@ -1,4 +1,3 @@
-import os
 import bcrypt
 from datetime import datetime, timedelta
 from jose import jwt
@@ -15,10 +14,6 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password, hashed_password):
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-
-ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30) 
-ACCESS_TOKEN_EXPIRE_MINUTES = int(ACCESS_TOKEN_EXPIRE_MINUTES) 
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     expires_at = datetime.utcnow() + (expires_delta if expires_delta else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
