@@ -44,6 +44,7 @@ def login_user(user_req: UserLoginRequest, db: Session = Depends(get_db)):
         access_token=access_token
     )      
 
+
 def get_current_user(token: str = Security(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=401,

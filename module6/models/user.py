@@ -11,8 +11,13 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index = True)
     fullname = Column(String)
     email = Column(String(100), unique=True, nullable=False, index = True)
-    password_hash = Column(String, nullable=False)
-
+    password_hash = Column(String, nullable=True)
+    
+    
+    github_id = Column(String(100), unique=True, nullable=True)
+    avatar_url = Column(String, nullable=True)
+    auth_provider = Column(String(50), nullable=True)
+    
     def __repr__(self):
         return f"<User(id={self.id}, username='{self.username}', fullname='{self.fullname}', email='{self.email}')>"
     

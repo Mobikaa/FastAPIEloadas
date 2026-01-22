@@ -1,12 +1,13 @@
 import os
 import bcrypt
-from dotenv import load_dotenv
-from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from jose import jwt
+from config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+print(f"JWT_SECRET_KEY: {JWT_SECRET_KEY}")
+print(f"JWT_ALGORITHM: {JWT_ALGORITHM}")
+
 
 def hash_password(password: str) -> str:
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
@@ -15,13 +16,6 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password, hashed_password):
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-load_dotenv()
-
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your_secret_key")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-
-print(f"JWT_SECRET_KEY: {JWT_SECRET_KEY}")
-print(f"JWT_ALGORITHM: {JWT_ALGORITHM}")
 
 ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30) 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(ACCESS_TOKEN_EXPIRE_MINUTES) 
@@ -39,3 +33,4 @@ def decode_access_token(token: str):
         return payload
     except jwt.JWTError:
         return None
+    
